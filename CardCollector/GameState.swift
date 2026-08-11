@@ -16,6 +16,11 @@ class GameState: ObservableObject {
     @Published var shelfPacks: [OrderedPack] = []
     let maxPackShelfSlots = 5
 
+    // Saját ár per polcon lévő tétel (UUID string -> ár). Ha nincs bejegyzés,
+    // az alapértelmezett (sellValue / shelfPrice) számít.
+    @Published var cardPrices: [String: Double] = [:]
+    @Published var packPrices: [String: Double] = [:]
+
     @Published var packsOpened: Int = 0
     @Published var selectedPackType: PackType = .standard
     @Published var isShowingPackSelection: Bool = false
@@ -31,9 +36,10 @@ class GameState: ObservableObject {
 
     @Published var offlineEarnings: Double? = nil
 
-    // --- BOLT-SIM: BETÉRŐ VÁSÁRLÓK ---
-    @Published var activeCustomerEmoji: String? = nil
-    @Published var customerXOffset: CGFloat = -160
+    // --- BOLT-SIM: BETÉRŐ VÁSÁRLÓK (2D pozíció, 0...1 arányban a bolt méretéhez) ---
+    @Published var isCustomerVisible: Bool = false
+    @Published var customerXFraction: CGFloat = 0.5
+    @Published var customerYFraction: CGFloat = 1.15
     @Published var lastSaleText: String? = nil
 
     private var customerTimer: Timer?
@@ -47,34 +53,55 @@ class GameState: ObservableObject {
         scheduleNextCustomer()
     }
 
+    private static func key(_ id: UUID) -> String { id.uuidString }
+
+    func price(for card: Card) -> Double {
+        cardPrices[GameState.key(card.id)] ?? card.sellValue
+    }
+
+    func price(for pack: OrderedPack) -> Double {
+        packPrices[GameState.key(pack.id)] ?? pack.type.shelfPrice
+    }
+
     // --- OPTIMALIZÁLÁS (AUTO-BEST) ---
     func optimizeStash() {
+        for id in displayedCardIDs { cardPrices.removeValue(forKey: GameState.key(id)) }
         displayedCardIDs.removeAll()
         let bestCards = collection.sorted { $0.sellValue > $1.sellValue }
         let topCards = bestCards.prefix(maxShelfSlots)
         displayedCardIDs = topCards.map { $0.id }
+        for card in topCards { cardPrices[GameState.key(card.id)] = card.sellValue }
         save()
     }
 
-    func displayCard(_ card: Card) {
+    func displayCard(_ card: Card, price: Double? = nil) {
         guard displayedCardIDs.count < maxShelfSlots else { return }
         guard !displayedCardIDs.contains(card.id) else { return }
         displayedCardIDs.append(card.id)
+        cardPrices[GameState.key(card.id)] = price ?? card.sellValue
+        save()
+    }
+
+    func updateCardPrice(_ card: Card, price: Double) {
+        cardPrices[GameState.key(card.id)] = max(price, 0.5)
         save()
     }
 
     func removeFromDisplay(_ card: Card) {
         if let index = displayedCardIDs.firstIndex(of: card.id) {
             displayedCardIDs.remove(at: index)
+            cardPrices.removeValue(forKey: GameState.key(card.id))
             save()
         }
     }
 
     func sellCard(_ card: Card) {
         guard let index = collection.firstIndex(of: card) else { return }
+        let earned = price(for: card)
         collection.remove(at: index)
         displayedCardIDs.removeAll { $0 == card.id }
-        money += card.sellValue
+        cardPrices.removeValue(forKey: GameState.key(card.id))
+        money += earned
         save()
     }
 
@@ -101,18 +128,34 @@ class GameState: ObservableObject {
         revealCards(for: pack.type)
     }
 
-    func moveToPackShelf(_ pack: OrderedPack) {
+    func moveToPackShelf(_ pack: OrderedPack, price: Double? = nil) {
         guard shelfPacks.count < maxPackShelfSlots else { return }
         guard let index = warehousePacks.firstIndex(of: pack) else { return }
         warehousePacks.remove(at: index)
         shelfPacks.append(pack)
+        packPrices[GameState.key(pack.id)] = price ?? pack.type.shelfPrice
+        save()
+    }
+
+    func updatePackPrice(_ pack: OrderedPack, price: Double) {
+        packPrices[GameState.key(pack.id)] = max(price, 0.5)
         save()
     }
 
     func removeFromPackShelf(_ pack: OrderedPack) {
         guard let index = shelfPacks.firstIndex(of: pack) else { return }
         shelfPacks.remove(at: index)
+        packPrices.removeValue(forKey: GameState.key(pack.id))
         warehousePacks.append(pack)
+        save()
+    }
+
+    func sellPackNow(_ pack: OrderedPack) {
+        guard let index = shelfPacks.firstIndex(of: pack) else { return }
+        let earned = price(for: pack)
+        shelfPacks.remove(at: index)
+        packPrices.removeValue(forKey: GameState.key(pack.id))
+        money += earned
         save()
     }
 
@@ -182,22 +225,37 @@ class GameState: ObservableObject {
         let sell: () -> String
     }
 
+    // Az ár és az alapérték arányából adódó szorzó: olcsóbban kínálva nagyobb
+    // eséllyel kel el, drágábban kínálva kisebb eséllyel. Placeholder-görbe,
+    // a végleges balance-fázisban finomhangoljuk.
+    private func priceEffect(basePrice: Double, customPrice: Double) -> Double {
+        guard customPrice > 0 else { return 0 }
+        let ratio = basePrice / customPrice
+        return min(max(ratio, 0.15), 3.0)
+    }
+
     private var saleCandidates: [SaleCandidate] {
         let packCandidates = shelfPacks.map { pack in
-            SaleCandidate(chance: pack.type.customerInterest, value: pack.type.shelfPrice) { [weak self] in
+            let currentPrice = price(for: pack)
+            let chance = pack.type.customerInterest * priceEffect(basePrice: pack.type.shelfPrice, customPrice: currentPrice)
+            return SaleCandidate(chance: chance, value: currentPrice) { [weak self] in
                 self?.shelfPacks.removeAll { $0.id == pack.id }
-                self?.money += pack.type.shelfPrice
+                self?.packPrices.removeValue(forKey: GameState.key(pack.id))
+                self?.money += currentPrice
                 self?.save()
-                return "Sold a sealed \(pack.type.rawValue) for $\(String(format: "%.2f", pack.type.shelfPrice))"
+                return "Sold a sealed \(pack.type.rawValue) for $\(String(format: "%.2f", currentPrice))"
             }
         }
         let cardCandidates = displayedCards.map { card in
-            SaleCandidate(chance: card.rarity.customerInterest, value: card.sellValue) { [weak self] in
-                let value = card.sellValue
+            let currentPrice = price(for: card)
+            let chance = card.rarity.customerInterest * priceEffect(basePrice: card.sellValue, customPrice: currentPrice)
+            return SaleCandidate(chance: chance, value: currentPrice) { [weak self] in
                 self?.sellCard(card)
-                return "Sold \(card.name) for $\(String(format: "%.2f", value))"
+                return "Sold \(card.name) for $\(String(format: "%.2f", currentPrice))"
             }
         }
+        // A sorrend (pakkok, majd kártyák) meg kell egyezzen a polc-vizuál
+        // render-sorrendjével, mert az index adja az NPC célpontjának x-koordinátáját.
         return packCandidates + cardCandidates
     }
 
@@ -210,13 +268,21 @@ class GameState: ObservableObject {
 
     private func spawnCustomer() {
         let candidates = saleCandidates
-        guard let target = candidates.randomElement() else {
+        guard !candidates.isEmpty else {
             scheduleNextCustomer()
             return
         }
+        let targetIndex = Int.random(in: 0..<candidates.count)
+        let target = candidates[targetIndex]
+        let xFraction = (CGFloat(targetIndex) + 0.5) / CGFloat(candidates.count)
 
-        activeCustomerEmoji = "🧍"
-        withAnimation(.easeInOut(duration: 1.2)) { customerXOffset = 0 }
+        customerXFraction = 0.5
+        customerYFraction = 1.15
+        isCustomerVisible = true
+        withAnimation(.easeInOut(duration: 1.2)) {
+            customerXFraction = xFraction
+            customerYFraction = 0.3
+        }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) { [weak self] in
             guard let self else { return }
@@ -225,11 +291,10 @@ class GameState: ObservableObject {
             } else {
                 self.lastSaleText = "A customer left without buying."
             }
-            withAnimation(.easeInOut(duration: 1.0)) { self.customerXOffset = 160 }
+            withAnimation(.easeInOut(duration: 1.0)) { self.customerYFraction = 1.15 }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { [weak self] in
                 guard let self else { return }
-                self.activeCustomerEmoji = nil
-                self.customerXOffset = -160
+                self.isCustomerVisible = false
                 self.lastSaleText = nil
                 self.scheduleNextCustomer()
             }
@@ -244,12 +309,14 @@ class GameState: ObservableObject {
         var displayedCardIDs: [UUID]
         var warehousePacks: [OrderedPack]
         var shelfPacks: [OrderedPack]
+        var cardPrices: [String: Double]
+        var packPrices: [String: Double]
         var packsOpened: Int
         var lastSavedAt: Date
     }
 
     func save() {
-        let data = SaveData(money: money, collection: collection, displayedCardIDs: displayedCardIDs, warehousePacks: warehousePacks, shelfPacks: shelfPacks, packsOpened: packsOpened, lastSavedAt: Date())
+        let data = SaveData(money: money, collection: collection, displayedCardIDs: displayedCardIDs, warehousePacks: warehousePacks, shelfPacks: shelfPacks, cardPrices: cardPrices, packPrices: packPrices, packsOpened: packsOpened, lastSavedAt: Date())
         guard let encoded = try? JSONEncoder().encode(data) else { return }
         try? encoded.write(to: GameState.saveURL, options: .atomic)
     }
@@ -263,6 +330,8 @@ class GameState: ObservableObject {
         displayedCardIDs = data.displayedCardIDs
         warehousePacks = data.warehousePacks
         shelfPacks = data.shelfPacks
+        cardPrices = data.cardPrices
+        packPrices = data.packPrices
         packsOpened = data.packsOpened
 
         let elapsedSeconds = Date().timeIntervalSince(data.lastSavedAt)

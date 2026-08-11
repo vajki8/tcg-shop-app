@@ -3,6 +3,7 @@ import SwiftUI
 // --- STASH VIEW (OPTIMIZE GOMBBAL) ---
 struct StashView: View {
     @ObservedObject var gameState: GameState
+    @State private var cardToPrice: Card?
     let shelfColumns = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
     let inventoryColumns = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
 
@@ -45,11 +46,11 @@ struct StashView: View {
                             if index < gameState.displayedCardIDs.count {
                                 let cardId = gameState.displayedCardIDs[index]
                                 if let card = gameState.collection.first(where: { $0.id == cardId }) {
-                                    ShelfCardItem(card: card)
+                                    ShelfCardItem(card: card, price: gameState.price(for: card))
                                         .onTapGesture { gameState.removeFromDisplay(card) }
                                         .contextMenu {
                                             Button("Remove from Shelf") { gameState.removeFromDisplay(card) }
-                                            Button("Sell for $\(String(format: "%.2f", card.sellValue))", role: .destructive) { gameState.sellCard(card) }
+                                            Button("Sell for $\(String(format: "%.2f", gameState.price(for: card)))", role: .destructive) { gameState.sellCard(card) }
                                         }
                                 }
                             } else {
@@ -72,9 +73,9 @@ struct StashView: View {
                             LazyVGrid(columns: inventoryColumns, spacing: 12) {
                                 ForEach(inventory) { card in
                                     MiniSummaryCard(card: card)
-                                        .onTapGesture { gameState.displayCard(card) }
+                                        .onTapGesture { cardToPrice = card }
                                         .contextMenu {
-                                            Button("Add to Shelf") { gameState.displayCard(card) }
+                                            Button("Add to Shelf") { cardToPrice = card }
                                             Button("Sell for $\(String(format: "%.2f", card.sellValue))", role: .destructive) { gameState.sellCard(card) }
                                         }
                                 }
@@ -83,6 +84,11 @@ struct StashView: View {
                     }
                 }.background(Color(UIColor.systemGroupedBackground))
             }.navigationBarHidden(true)
+            .sheet(item: $cardToPrice) { card in
+                PriceEditorSheet(title: card.name, suggestedPrice: card.sellValue, confirmLabel: "Put on Shelf") { price in
+                    gameState.displayCard(card, price: price)
+                }
+            }
         }
     }
 }
@@ -90,10 +96,11 @@ struct StashView: View {
 // --- HELPER VIEWS ---
 struct ShelfCardItem: View {
     let card: Card
+    let price: Double
     var body: some View {
         VStack(spacing: 0) {
             ZStack { LinearGradient(colors: card.rarity.color, startPoint: .top, endPoint: .bottom); Image(systemName: "tag.fill").font(.caption).foregroundColor(.white.opacity(0.8)) }.frame(height: 60)
-            VStack(spacing: 0) { Text(card.name).font(.system(size: 7, weight: .bold)).lineLimit(1).foregroundColor(.primary).padding(2); Text("$\(String(format: "%.2f", card.sellValue))").font(.system(size: 7, weight: .black)).foregroundColor(.green).padding(.bottom, 2) }.frame(height: 30).frame(maxWidth: .infinity).background(Color.white)
+            VStack(spacing: 0) { Text(card.name).font(.system(size: 7, weight: .bold)).lineLimit(1).foregroundColor(.primary).padding(2); Text("$\(String(format: "%.2f", price))").font(.system(size: 7, weight: .black)).foregroundColor(.green).padding(.bottom, 2) }.frame(height: 30).frame(maxWidth: .infinity).background(Color.white)
         }.clipShape(RoundedRectangle(cornerRadius: 6)).overlay(RoundedRectangle(cornerRadius: 6).stroke(card.variant != .standard ? card.variant.color : Color.white, lineWidth: 2)).shadow(color: card.rarity.color.first!.opacity(0.5), radius: 5)
     }
 }
