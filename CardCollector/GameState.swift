@@ -6,11 +6,15 @@ import Combine
 class GameState: ObservableObject {
     @Published var money: Double = 15.0
     @Published var collection: [Card] = []
-    // "Kirakatba tett, eladásra váró kártya" — a leendő bolt-sim ez alapján
-    // fogja az NPC-vásárlásokat futtatni. Amíg a bolt-sim nincs kész, ez
-    // még a régi "aktív, bevételt termelő" slotot jelenti.
+    // "Kirakatba tett, eladásra váró kártya" — az NPC-k ezek közül vásárolnak.
     @Published var displayedCardIDs: [UUID] = []
     let maxShelfSlots = 10
+
+    // Megrendelt, bontatlan pakkok. Raktárban várnak, amíg el nem döntöd,
+    // kibontod-e, vagy a polcra teszed bontatlanul eladásra.
+    @Published var warehousePacks: [OrderedPack] = []
+    @Published var shelfPacks: [OrderedPack] = []
+    let maxPackShelfSlots = 5
 
     @Published var packsOpened: Int = 0
     @Published var selectedPackType: PackType = .standard
@@ -27,7 +31,12 @@ class GameState: ObservableObject {
 
     @Published var offlineEarnings: Double? = nil
 
-    private var timer: Timer?
+    // --- BOLT-SIM: BETÉRŐ VÁSÁRLÓK ---
+    @Published var activeCustomerEmoji: String? = nil
+    @Published var customerXOffset: CGFloat = -160
+    @Published var lastSaleText: String? = nil
+
+    private var customerTimer: Timer?
     private static let saveURL = FileManager.default
         .urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("gamesave.json")
@@ -35,22 +44,14 @@ class GameState: ObservableObject {
     init() {
         self.allCards = GameState.generateCardDatabase()
         loadAndApplyOfflineIncome()
-        startPassiveIncome()
+        scheduleNextCustomer()
     }
 
     // --- OPTIMALIZÁLÁS (AUTO-BEST) ---
     func optimizeStash() {
-        // 1. Ürítjük a polcot
         displayedCardIDs.removeAll()
-
-        // 2. Sorba rendezzük a kártyákat bevétel szerint (csökkenő)
-        // A variant multiplier már benne van a passiveIncome-ban, így a Lucky Common lehet jobb mint egy sima Rare.
-        let bestCards = collection.sorted { $0.passiveIncome > $1.passiveIncome }
-
-        // 3. Kiválasztjuk a top 10-et (vagy kevesebbet, ha nincs annyi)
+        let bestCards = collection.sorted { $0.sellValue > $1.sellValue }
         let topCards = bestCards.prefix(maxShelfSlots)
-
-        // 4. Berakjuk az ID-kat
         displayedCardIDs = topCards.map { $0.id }
         save()
     }
@@ -81,15 +82,38 @@ class GameState: ObservableObject {
         return collection.filter { displayedCardIDs.contains($0.id) }
     }
 
-    private func startPassiveIncome() {
-        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.money += (self.totalPassiveIncomePerSecond / 10.0)
+    // --- RENDELÉS / RAKTÁR / PAKK-POLC ---
+
+    func orderPack(_ type: PackType, amount: Int = 1) {
+        let totalCost = type.price * Double(amount)
+        guard money >= totalCost else { return }
+        money -= totalCost
+        for _ in 0..<amount {
+            warehousePacks.append(OrderedPack(id: UUID(), type: type))
         }
+        save()
     }
 
-    var totalPassiveIncomePerSecond: Double {
-        displayedCards.reduce(0) { $0 + $1.passiveIncome }
+    func openPack(_ pack: OrderedPack) {
+        guard let index = warehousePacks.firstIndex(of: pack) else { return }
+        warehousePacks.remove(at: index)
+        packsOpened += 1
+        revealCards(for: pack.type)
+    }
+
+    func moveToPackShelf(_ pack: OrderedPack) {
+        guard shelfPacks.count < maxPackShelfSlots else { return }
+        guard let index = warehousePacks.firstIndex(of: pack) else { return }
+        warehousePacks.remove(at: index)
+        shelfPacks.append(pack)
+        save()
+    }
+
+    func removeFromPackShelf(_ pack: OrderedPack) {
+        guard let index = shelfPacks.firstIndex(of: pack) else { return }
+        shelfPacks.remove(at: index)
+        warehousePacks.append(pack)
+        save()
     }
 
     private static let loreTemplates = ["Forged in fire.", "Ancient relic.", "Lost for ages.", "Cursed item.", "Blessed by gods.", "Vibrating with power.", "Cold to the touch.", "Heavy as lead.", "Found in a dragon's hoard.", "Whispers in the dark."]
@@ -111,36 +135,21 @@ class GameState: ObservableObject {
         return cards.sorted { $0.originalID < $1.originalID }
     }
 
-    func buyPacks(amount: Int) {
-        let totalCost = selectedPackType.price * Double(amount)
-        guard money >= totalCost else { return }
-
-        money -= totalCost
-        packsOpened += amount
-        self.showSummaryAfterReveal = (amount > 1)
-
+    private func revealCards(for packType: PackType) {
         var generatedCards: [Card] = []
-        let totalCardsCount = amount * 5
-
-        for _ in 0..<totalCardsCount {
-            let rarity = selectRarity(for: selectedPackType)
+        for _ in 0..<5 {
+            let rarity = selectRarity(for: packType)
             let possibleCards = allCards.filter { $0.rarity == rarity }
             let baseCard = possibleCards.randomElement() ?? allCards.first!
-            let variant = selectVariant(for: selectedPackType)
+            let variant = selectVariant(for: packType)
             let newCard = Card(id: UUID(), name: baseCard.name, description: baseCard.description, rarity: rarity, variant: variant, originalID: baseCard.originalID)
             generatedCards.append(newCard)
             collection.append(newCard)
         }
 
         self.allNewCards = generatedCards
-
-        if amount == 1 {
-            self.cardsToReveal = generatedCards
-        } else {
-            let top10 = generatedCards.sorted { ($0.rarity.score * Int($0.variant.multiplier)) > ($1.rarity.score * Int($1.variant.multiplier)) }.prefix(10)
-            self.cardsToReveal = top10.sorted { ($0.rarity.score * Int($0.variant.multiplier)) < ($1.rarity.score * Int($1.variant.multiplier)) }
-        }
-
+        self.cardsToReveal = generatedCards
+        self.showSummaryAfterReveal = false
         self.currentCardIndex = 0
         self.isOpeningPack = true
         self.isShowingSummary = false
@@ -165,18 +174,82 @@ class GameState: ObservableObject {
     }
     func hasCard(originalID: Int) -> Bool { collection.contains(where: { $0.originalID == originalID }) }
 
+    // --- BOLT-SIM: NPC LÁTOGATÁSOK ---
+
+    private struct SaleCandidate {
+        let chance: Double
+        let value: Double
+        let sell: () -> String
+    }
+
+    private var saleCandidates: [SaleCandidate] {
+        let packCandidates = shelfPacks.map { pack in
+            SaleCandidate(chance: pack.type.customerInterest, value: pack.type.shelfPrice) { [weak self] in
+                self?.shelfPacks.removeAll { $0.id == pack.id }
+                self?.money += pack.type.shelfPrice
+                self?.save()
+                return "Sold a sealed \(pack.type.rawValue) for $\(String(format: "%.2f", pack.type.shelfPrice))"
+            }
+        }
+        let cardCandidates = displayedCards.map { card in
+            SaleCandidate(chance: card.rarity.customerInterest, value: card.sellValue) { [weak self] in
+                let value = card.sellValue
+                self?.sellCard(card)
+                return "Sold \(card.name) for $\(String(format: "%.2f", value))"
+            }
+        }
+        return packCandidates + cardCandidates
+    }
+
+    private func scheduleNextCustomer() {
+        let delay = Double.random(in: 3...7)
+        customerTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            self?.spawnCustomer()
+        }
+    }
+
+    private func spawnCustomer() {
+        let candidates = saleCandidates
+        guard let target = candidates.randomElement() else {
+            scheduleNextCustomer()
+            return
+        }
+
+        activeCustomerEmoji = "🧍"
+        withAnimation(.easeInOut(duration: 1.2)) { customerXOffset = 0 }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) { [weak self] in
+            guard let self else { return }
+            if Double.random(in: 0...1) < target.chance {
+                self.lastSaleText = target.sell()
+            } else {
+                self.lastSaleText = "A customer left without buying."
+            }
+            withAnimation(.easeInOut(duration: 1.0)) { self.customerXOffset = 160 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { [weak self] in
+                guard let self else { return }
+                self.activeCustomerEmoji = nil
+                self.customerXOffset = -160
+                self.lastSaleText = nil
+                self.scheduleNextCustomer()
+            }
+        }
+    }
+
     // --- PERZISZTENCIA ---
 
     private struct SaveData: Codable {
         var money: Double
         var collection: [Card]
         var displayedCardIDs: [UUID]
+        var warehousePacks: [OrderedPack]
+        var shelfPacks: [OrderedPack]
         var packsOpened: Int
         var lastSavedAt: Date
     }
 
     func save() {
-        let data = SaveData(money: money, collection: collection, displayedCardIDs: displayedCardIDs, packsOpened: packsOpened, lastSavedAt: Date())
+        let data = SaveData(money: money, collection: collection, displayedCardIDs: displayedCardIDs, warehousePacks: warehousePacks, shelfPacks: shelfPacks, packsOpened: packsOpened, lastSavedAt: Date())
         guard let encoded = try? JSONEncoder().encode(data) else { return }
         try? encoded.write(to: GameState.saveURL, options: .atomic)
     }
@@ -188,12 +261,23 @@ class GameState: ObservableObject {
         money = data.money
         collection = data.collection
         displayedCardIDs = data.displayedCardIDs
+        warehousePacks = data.warehousePacks
+        shelfPacks = data.shelfPacks
         packsOpened = data.packsOpened
 
         let elapsedSeconds = Date().timeIntervalSince(data.lastSavedAt)
         guard elapsedSeconds > 5 else { return }
 
-        let income = totalPassiveIncomePerSecond * elapsedSeconds
+        // Közelítés: átlagosan 5 mp-enként tér be egy vásárló, és minden
+        // eladható tétel várható értékének átlagát fizeti ki visszamenőleg.
+        // Éles bolt-sim nélkül ez csak egy nagyságrendi becslés.
+        let candidates = saleCandidates
+        guard !candidates.isEmpty else { return }
+        let averageExpectedValuePerVisit = candidates
+            .map { $0.chance * $0.value }
+            .reduce(0, +) / Double(candidates.count)
+        let estimatedVisits = min(elapsedSeconds / 5.0, 200)
+        let income = estimatedVisits * averageExpectedValuePerVisit
         if income > 0 {
             money += income
             offlineEarnings = income

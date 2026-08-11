@@ -2,30 +2,153 @@ import SwiftUI
 
 struct GameView: View {
     @ObservedObject var gameState: GameState
+
     var body: some View {
         NavigationView {
             ZStack {
                 Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
-                VStack(spacing: 30) {
-                    VStack {
-                        Text("BALANCE").font(.caption).bold().foregroundColor(.gray)
-                        HStack {
-                            Text("$\(String(format: "%.2f", gameState.money))").font(.system(size: 40, weight: .black, design: .rounded))
-                            HStack(spacing: 2) { Image(systemName: "bolt.fill"); Text("$\(String(format: "%.2f", gameState.totalPassiveIncomePerSecond))/s") }
-                                .font(.caption).bold().padding(6).background(Color.green.opacity(0.2)).foregroundColor(.green).clipShape(Capsule())
-                        }
-                        Text("Income from Stash only").font(.caption2).foregroundColor(.gray)
-                    }.padding(.top, 40)
+                VStack(spacing: 16) {
+                    header
+                    ShopFloorView(gameState: gameState)
+                        .frame(height: 220)
+                        .padding(.horizontal)
+                    WarehouseStrip(gameState: gameState)
                     Spacer()
-                    BoosterPackVisual(packType: gameState.selectedPackType).shadow(color: .black.opacity(0.3), radius: 20, y: 10).scaleEffect(gameState.isOpeningPack ? 1.1 : 1.0).onTapGesture { withAnimation { gameState.isShowingPackSelection = true } }
-                    Text("Tap pack to change type").font(.caption).foregroundColor(.gray)
-                    Spacer()
-                    HStack(spacing: 20) {
-                        BuyButton(title: "1 Pack", subtitle: "5 Cards", price: gameState.selectedPackType.price, color: gameState.selectedPackType == .premium ? .orange : .blue, action: { gameState.buyPacks(amount: 1) }, canAfford: gameState.money >= gameState.selectedPackType.price)
-                        BuyButton(title: "10 Packs", subtitle: "50 Cards", price: gameState.selectedPackType.price * 10, color: gameState.selectedPackType == .premium ? .black : .purple, action: { gameState.buyPacks(amount: 10) }, canAfford: gameState.money >= gameState.selectedPackType.price * 10)
-                    }.padding(.bottom, 40).padding(.horizontal).disabled(gameState.isOpeningPack)
+                    orderControls
                 }
+                .padding(.top, 20)
             }.navigationBarHidden(true)
         }
+    }
+
+    private var header: some View {
+        VStack {
+            Text("BALANCE").font(.caption).bold().foregroundColor(.gray)
+            Text("$\(String(format: "%.2f", gameState.money))").font(.system(size: 40, weight: .black, design: .rounded))
+            Text("Customers buy from your shelf").font(.caption2).foregroundColor(.gray)
+        }
+    }
+
+    private var orderControls: some View {
+        VStack(spacing: 10) {
+            HStack {
+                BoosterPackVisual(packType: gameState.selectedPackType)
+                    .scaleEffect(0.4)
+                    .frame(width: 90, height: 120)
+                    .clipped()
+                    .onTapGesture { withAnimation { gameState.isShowingPackSelection = true } }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(gameState.selectedPackType.rawValue).font(.headline)
+                    Text("Tap to change type").font(.caption).foregroundColor(.gray)
+                }
+                Spacer()
+            }.padding(.horizontal)
+
+            HStack(spacing: 20) {
+                BuyButton(title: "Order 1", subtitle: "To Warehouse", price: gameState.selectedPackType.price, color: gameState.selectedPackType == .premium ? .orange : .blue, action: { gameState.orderPack(gameState.selectedPackType, amount: 1) }, canAfford: gameState.money >= gameState.selectedPackType.price)
+                BuyButton(title: "Order 10", subtitle: "To Warehouse", price: gameState.selectedPackType.price * 10, color: gameState.selectedPackType == .premium ? .black : .purple, action: { gameState.orderPack(gameState.selectedPackType, amount: 10) }, canAfford: gameState.money >= gameState.selectedPackType.price * 10)
+            }.padding(.bottom, 30).padding(.horizontal)
+        }
+    }
+}
+
+// --- BOLT PADLÓ: POLCON LÉVŐ PAKKOK + BETÉRŐ NPC ---
+struct ShopFloorView: View {
+    @ObservedObject var gameState: GameState
+    let columns = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 16).fill(Color(uiColor: .systemBackground))
+            RoundedRectangle(cornerRadius: 16).strokeBorder(Color.gray.opacity(0.2), lineWidth: 1)
+
+            VStack(spacing: 8) {
+                HStack {
+                    Text("SHOP FLOOR").font(.caption).bold().foregroundColor(.gray)
+                    Spacer()
+                    Text("\(gameState.shelfPacks.count)/\(gameState.maxPackShelfSlots) sealed packs").font(.caption2).foregroundColor(.gray)
+                }.padding([.top, .horizontal], 10)
+
+                LazyVGrid(columns: columns, spacing: 8) {
+                    ForEach(0..<gameState.maxPackShelfSlots, id: \.self) { index in
+                        if index < gameState.shelfPacks.count {
+                            let pack = gameState.shelfPacks[index]
+                            PackShelfItem(pack: pack)
+                                .contextMenu {
+                                    Button("Back to Warehouse") { gameState.removeFromPackShelf(pack) }
+                                }
+                        } else {
+                            RoundedRectangle(cornerRadius: 8).strokeBorder(Color.gray.opacity(0.2), style: StrokeStyle(lineWidth: 2, dash: [5])).frame(height: 60)
+                        }
+                    }
+                }.padding(.horizontal, 10)
+
+                Spacer(minLength: 0)
+
+                if let text = gameState.lastSaleText {
+                    Text(text).font(.caption).bold().foregroundColor(.green).padding(.bottom, 4).transition(.opacity)
+                }
+            }
+
+            if let emoji = gameState.activeCustomerEmoji {
+                Text(emoji)
+                    .font(.system(size: 32))
+                    .offset(x: gameState.customerXOffset, y: 60)
+                    .transition(.opacity)
+            }
+        }
+    }
+}
+
+struct PackShelfItem: View {
+    let pack: OrderedPack
+    var body: some View {
+        VStack(spacing: 2) {
+            Image(systemName: "shippingbox.fill").foregroundColor(pack.type == .premium ? .orange : .blue)
+            Text("$\(String(format: "%.0f", pack.type.shelfPrice))").font(.system(size: 9, weight: .bold))
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 60)
+        .background(Color(uiColor: .systemGray6))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+// --- RAKTÁR: BONTATLAN PAKKOK ---
+struct WarehouseStrip: View {
+    @ObservedObject var gameState: GameState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("WAREHOUSE (\(gameState.warehousePacks.count))").font(.caption).bold().foregroundColor(.gray).padding(.horizontal)
+            if gameState.warehousePacks.isEmpty {
+                Text("No packs ordered yet.").font(.caption).foregroundColor(.gray).padding(.horizontal)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(gameState.warehousePacks) { pack in
+                            WarehousePackItem(pack: pack)
+                                .contextMenu {
+                                    Button("Open") { gameState.openPack(pack) }
+                                    Button("Put on Shelf") { gameState.moveToPackShelf(pack) }
+                                }
+                        }
+                    }.padding(.horizontal)
+                }
+            }
+        }
+    }
+}
+
+struct WarehousePackItem: View {
+    let pack: OrderedPack
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: "shippingbox.fill").font(.title2).foregroundColor(pack.type == .premium ? .orange : .blue)
+            Text(pack.type == .premium ? "Premium" : "Standard").font(.system(size: 9, weight: .bold))
+        }
+        .frame(width: 64, height: 64)
+        .background(Color(uiColor: .systemGray6))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }

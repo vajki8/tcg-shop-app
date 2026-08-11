@@ -30,7 +30,7 @@ enum CardVariant: String, CaseIterable, Codable {
     }
 }
 
-enum PackType: String, CaseIterable {
+enum PackType: String, CaseIterable, Codable {
     case standard = "Standard Pack"
     case premium = "Premium Pack"
 
@@ -47,6 +47,18 @@ enum PackType: String, CaseIterable {
         case .premium: return [.yellow, .orange, .black]
         }
     }
+
+    // Esély, hogy egy betérő NPC megvegye a bontatlan pakkot egy boltlátogatás során.
+    // Ideiglenes placeholder-görbe, amíg nincs igazi balance-fázis.
+    var customerInterest: Double {
+        switch self {
+        case .standard: return 0.5
+        case .premium: return 0.08
+        }
+    }
+
+    // Bontatlan pakk eladási ára a polcon (kis felár a rendelési árhoz képest).
+    var shelfPrice: Double { price * 1.15 }
 }
 
 enum Rarity: String, CaseIterable, Codable {
@@ -74,17 +86,6 @@ enum Rarity: String, CaseIterable, Codable {
         }
     }
 
-    var baseIncome: Double {
-        switch self {
-        case .common: return 0.05
-        case .rare: return 0.25
-        case .epic: return 1.25
-        case .legendary: return 8.0
-        case .mythic: return 50.0
-        case .god: return 500.0
-        }
-    }
-
     var dropRate: Double {
         switch self {
         case .common: return 80.0
@@ -96,7 +97,7 @@ enum Rarity: String, CaseIterable, Codable {
         }
     }
 
-    // Ideiglenes fix eladási ár P0-hoz. A bolt-sim balance fázisban ezt
+    // Ideiglenes fix eladási ár. A bolt-sim balance fázisban ezt
     // az NPC-vásárlási görbe váltja majd fel.
     var baseSellValue: Double {
         switch self {
@@ -106,6 +107,19 @@ enum Rarity: String, CaseIterable, Codable {
         case .legendary: return 220.0
         case .mythic: return 1400.0
         case .god: return 15000.0
+        }
+    }
+
+    // Esély, hogy egy betérő NPC megvegye ezt a ritkaságú kártyát egy
+    // boltlátogatás során — minél olcsóbb/gyakoribb, annál nagyobb eséllyel kel el.
+    var customerInterest: Double {
+        switch self {
+        case .common: return 0.7
+        case .rare: return 0.35
+        case .epic: return 0.12
+        case .legendary: return 0.04
+        case .mythic: return 0.01
+        case .god: return 0.0005
         }
     }
 }
@@ -118,11 +132,14 @@ struct Card: Identifiable, Equatable, Hashable, Codable {
     let variant: CardVariant
     let originalID: Int
 
-    var passiveIncome: Double {
-        rarity.baseIncome * variant.multiplier
-    }
-
     var sellValue: Double {
         rarity.baseSellValue * variant.multiplier
     }
+}
+
+// Egy megrendelt, még bontatlan pakk — vagy a raktárban vár, vagy a polcon
+// eladásra van kitéve az NPC-knek.
+struct OrderedPack: Identifiable, Equatable, Codable {
+    let id: UUID
+    let type: PackType
 }

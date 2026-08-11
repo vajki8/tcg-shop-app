@@ -8,7 +8,8 @@ struct StatsView: View {
                 Section(header: Text("General")) {
                     HStack { Text("Total Packs Opened"); Spacer(); Text("\(gameState.packsOpened)") }
                     HStack { Text("Cards Collected"); Spacer(); Text("\(gameState.collection.count)") }
-                    HStack { Text("Income (Active)"); Spacer(); Text("$\(String(format: "%.2f", gameState.totalPassiveIncomePerSecond))/s").foregroundColor(.green) }
+                    HStack { Text("Packs In Warehouse"); Spacer(); Text("\(gameState.warehousePacks.count)") }
+                    HStack { Text("Sealed Packs On Shelf"); Spacer(); Text("\(gameState.shelfPacks.count)") }
                 }
                 Section(header: Text("Variants Found")) {
                     ForEach(CardVariant.allCases.filter{$0 != .standard}, id: \.self) { variant in
