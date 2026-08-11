@@ -95,9 +95,22 @@ enum Rarity: String, CaseIterable, Codable {
         case .god: return 0.02
         }
     }
+
+    // Ideiglenes fix eladási ár P0-hoz. A bolt-sim balance fázisban ezt
+    // az NPC-vásárlási görbe váltja majd fel.
+    var baseSellValue: Double {
+        switch self {
+        case .common: return 1.0
+        case .rare: return 6.0
+        case .epic: return 35.0
+        case .legendary: return 220.0
+        case .mythic: return 1400.0
+        case .god: return 15000.0
+        }
+    }
 }
 
-struct Card: Identifiable, Equatable, Hashable {
+struct Card: Identifiable, Equatable, Hashable, Codable {
     let id: UUID
     let name: String
     let description: String
@@ -107,5 +120,9 @@ struct Card: Identifiable, Equatable, Hashable {
 
     var passiveIncome: Double {
         rarity.baseIncome * variant.multiplier
+    }
+
+    var sellValue: Double {
+        rarity.baseSellValue * variant.multiplier
     }
 }

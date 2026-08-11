@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var gameState = GameState()
+    @Environment(\.scenePhase) private var scenePhase
 
     init() { UITabBar.appearance().backgroundColor = UIColor.secondarySystemBackground }
 
@@ -18,6 +19,19 @@ struct ContentView: View {
             if gameState.isShowingSummary { PackSummaryView(gameState: gameState) }
             else if gameState.isOpeningPack { BoosterPackSwipeView(gameState: gameState) }
         })
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase != .active { gameState.save() }
+        }
+        .alert("Welcome back!", isPresented: Binding(
+            get: { gameState.offlineEarnings != nil },
+            set: { if !$0 { gameState.offlineEarnings = nil } }
+        )) {
+            Button("Nice") { gameState.offlineEarnings = nil }
+        } message: {
+            if let earnings = gameState.offlineEarnings {
+                Text("Your stash earned $\(String(format: "%.2f", earnings)) while you were away.")
+            }
+        }
     }
 }
 

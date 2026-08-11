@@ -12,7 +12,7 @@ struct StashView: View {
                 // SHELF
                 VStack {
                     HStack {
-                        Text("ACTIVE SHELF (\(gameState.equippedCardIDs.count)/10)")
+                        Text("ACTIVE SHELF (\(gameState.displayedCardIDs.count)/10)")
                             .font(.headline).foregroundColor(.white.opacity(0.8))
 
                         Spacer()
@@ -42,10 +42,15 @@ struct StashView: View {
 
                     LazyVGrid(columns: shelfColumns, spacing: 10) {
                         ForEach(0..<10) { index in
-                            if index < gameState.equippedCardIDs.count {
-                                let cardId = gameState.equippedCardIDs[index]
+                            if index < gameState.displayedCardIDs.count {
+                                let cardId = gameState.displayedCardIDs[index]
                                 if let card = gameState.collection.first(where: { $0.id == cardId }) {
-                                    ShelfCardItem(card: card).onTapGesture { gameState.unequipCard(card) }
+                                    ShelfCardItem(card: card)
+                                        .onTapGesture { gameState.removeFromDisplay(card) }
+                                        .contextMenu {
+                                            Button("Remove from Shelf") { gameState.removeFromDisplay(card) }
+                                            Button("Sell for $\(String(format: "%.2f", card.sellValue))", role: .destructive) { gameState.sellCard(card) }
+                                        }
                                 }
                             } else {
                                 RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.2), style: StrokeStyle(lineWidth: 2, dash: [5])).frame(height: 90).overlay(Image(systemName: "plus").foregroundColor(.white.opacity(0.2)))
@@ -60,13 +65,18 @@ struct StashView: View {
                 VStack {
                     HStack { Text("INVENTORY").font(.headline).foregroundColor(.gray); Spacer() }.padding(.horizontal).padding(.top, 10)
                     ScrollView {
-                        let inventory = gameState.collection.filter { !gameState.equippedCardIDs.contains($0.id) }.sorted { $0.passiveIncome > $1.passiveIncome }
+                        let inventory = gameState.collection.filter { !gameState.displayedCardIDs.contains($0.id) }.sorted { $0.passiveIncome > $1.passiveIncome }
                         if inventory.isEmpty {
                             Text("No cards in inventory.\nOpen packs to get cards!").multilineTextAlignment(.center).foregroundColor(.gray).padding(.top, 50)
                         } else {
                             LazyVGrid(columns: inventoryColumns, spacing: 12) {
                                 ForEach(inventory) { card in
-                                    MiniSummaryCard(card: card).onTapGesture { gameState.equipCard(card) }
+                                    MiniSummaryCard(card: card)
+                                        .onTapGesture { gameState.displayCard(card) }
+                                        .contextMenu {
+                                            Button("Add to Shelf") { gameState.displayCard(card) }
+                                            Button("Sell for $\(String(format: "%.2f", card.sellValue))", role: .destructive) { gameState.sellCard(card) }
+                                        }
                                 }
                             }.padding()
                         }
