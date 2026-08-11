@@ -40,7 +40,10 @@ class GameState: ObservableObject {
     @Published var isCustomerVisible: Bool = false
     @Published var customerXFraction: CGFloat = 0.5
     @Published var customerYFraction: CGFloat = 1.15
+    @Published var customerColor: Color = .blue
     @Published var lastSaleText: String? = nil
+
+    private static let customerColors: [Color] = [.blue, .red, .green, .purple, .orange, .pink, .teal]
 
     private var customerTimer: Timer?
     private static let saveURL = FileManager.default
@@ -278,6 +281,7 @@ class GameState: ObservableObject {
 
         customerXFraction = 0.5
         customerYFraction = 1.15
+        customerColor = GameState.customerColors.randomElement() ?? .blue
         isCustomerVisible = true
         withAnimation(.easeInOut(duration: 1.2)) {
             customerXFraction = xFraction
