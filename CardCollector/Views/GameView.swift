@@ -3,102 +3,63 @@ import SwiftUI
 struct GameView: View {
     @ObservedObject var gameState: GameState
     @State private var isShowingOrderSheet = false
+    @State private var isShowingWarehouseSheet = false
 
     var body: some View {
-        NavigationView {
-            ZStack {
-                Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
+        ZStack {
+            ShopSceneView(gameState: gameState)
+                .ignoresSafeArea()
 
-                VStack(spacing: 12) {
-                    header
-                    ShopSceneView(gameState: gameState)
-                        .frame(height: 320)
-                        .padding(.horizontal)
-                    WarehouseStrip(gameState: gameState)
-                        .padding(.bottom, 10)
-                }
-                .padding(.top, 8)
-
-                VStack {
-                    HStack {
-                        Spacer()
-                        Button { isShowingOrderSheet = true } label: {
-                            Image(systemName: "cart.badge.plus")
-                                .font(.title3).bold()
-                                .foregroundColor(.white)
-                                .padding(14)
-                                .background(Circle().fill(Color.indigo))
-                                .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
-                        }
-                    }
+            VStack {
+                HStack(alignment: .top) {
+                    balanceHUD
                     Spacer()
-                }.padding()
+                    VStack(spacing: 12) {
+                        cornerButton(icon: "cart.badge.plus", color: .indigo, action: { isShowingOrderSheet = true })
+                        cornerButton(icon: "shippingbox.fill", color: .brown, badge: gameState.warehousePacks.count, action: { isShowingWarehouseSheet = true })
+                    }
+                }
+                .padding(.top, 54)
+                .padding(.horizontal, 16)
+                Spacer()
             }
-            .navigationBarHidden(true)
-            .sheet(isPresented: $isShowingOrderSheet) {
-                OrderSheet(gameState: gameState)
-            }
+        }
+        .sheet(isPresented: $isShowingOrderSheet) {
+            OrderSheet(gameState: gameState)
+        }
+        .sheet(isPresented: $isShowingWarehouseSheet) {
+            WarehouseSheet(gameState: gameState)
         }
     }
 
-    private var header: some View {
-        VStack(spacing: 2) {
-            Text("BALANCE").font(.caption).bold().foregroundColor(.gray)
-            Text("$\(String(format: "%.2f", gameState.money))").font(.system(size: 34, weight: .black, design: .rounded))
+    private var balanceHUD: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("BALANCE").font(.system(size: 10, weight: .bold)).foregroundColor(.white.opacity(0.8))
+            Text("$\(String(format: "%.2f", gameState.money))").font(.system(size: 26, weight: .black, design: .rounded)).foregroundColor(.white)
         }
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(Color.black.opacity(0.4))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
-}
 
-// --- RAKTÁR: BONTATLAN PAKKOK ---
-struct WarehouseStrip: View {
-    @ObservedObject var gameState: GameState
-    @State private var selectedPack: OrderedPack?
-    @State private var packToPrice: OrderedPack?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("WAREHOUSE (\(gameState.warehousePacks.count))").font(.caption).bold().foregroundColor(.gray).padding(.horizontal)
-            if gameState.warehousePacks.isEmpty {
-                Text("No packs ordered yet.").font(.caption).foregroundColor(.gray).padding(.horizontal)
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(gameState.warehousePacks) { pack in
-                            WarehousePackItem(pack: pack)
-                                .onTapGesture { selectedPack = pack }
-                        }
-                    }.padding(.horizontal)
+    private func cornerButton(icon: String, color: Color, badge: Int = 0, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: icon)
+                    .font(.title3).bold()
+                    .foregroundColor(.white)
+                    .padding(14)
+                    .background(Circle().fill(color))
+                    .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
+                if badge > 0 {
+                    Text("\(badge)")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(5)
+                        .background(Circle().fill(Color.red))
+                        .offset(x: 6, y: -6)
                 }
             }
         }
-        .confirmationDialog(
-            selectedPack.map { $0.type.rawValue } ?? "",
-            isPresented: Binding(get: { selectedPack != nil }, set: { if !$0 { selectedPack = nil } }),
-            titleVisibility: .visible
-        ) {
-            if let pack = selectedPack {
-                Button("Open") { gameState.openPack(pack) }
-                Button("Put on Shelf") { packToPrice = pack }
-            }
-            Button("Cancel", role: .cancel) {}
-        }
-        .sheet(item: $packToPrice) { pack in
-            PriceEditorSheet(title: "Sealed \(pack.type.rawValue)", suggestedPrice: pack.type.shelfPrice, confirmLabel: "Put on Shelf") { price in
-                gameState.moveToPackShelf(pack, price: price)
-            }
-        }
-    }
-}
-
-struct WarehousePackItem: View {
-    let pack: OrderedPack
-    var body: some View {
-        VStack(spacing: 4) {
-            SealedPackIcon(color: pack.type == .premium ? .orange : .blue, size: 30)
-            Text(pack.type == .premium ? "Premium" : "Standard").font(.system(size: 9, weight: .bold))
-        }
-        .frame(width: 64, height: 64)
-        .background(Color(uiColor: .systemGray6))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }

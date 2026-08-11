@@ -17,7 +17,7 @@ struct ShopSceneView: View {
 
                 VStack(spacing: 0) {
                     ShopWall()
-                        .frame(height: 62)
+                        .frame(height: 124)
 
                     CounterPanel {
                         ShelfGrid(items: shelfItems, totalSlots: gameState.maxShelfSlots + gameState.maxPackShelfSlots, gameState: gameState) { item in
@@ -29,7 +29,7 @@ struct ShopSceneView: View {
 
                     Spacer(minLength: 0)
 
-                    DoorView().padding(.bottom, 12)
+                    DoorView().padding(.bottom, 26)
                 }
 
                 if gameState.isCustomerVisible {
@@ -48,8 +48,6 @@ struct ShopSceneView: View {
                 }
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Color.black.opacity(0.15), lineWidth: 1))
         .sheet(item: $selectedItem) { item in
             ShelfItemSheet(item: item, gameState: gameState)
         }
@@ -68,6 +66,8 @@ private struct ShopWall: View {
                 Text("CARD SHOP").font(.system(size: 11, weight: .black)).foregroundColor(.black.opacity(0.55)).tracking(1)
                 WindowPane()
             }
+            .padding(.top, 56)
+            .frame(maxHeight: .infinity, alignment: .top)
         }
     }
 }
