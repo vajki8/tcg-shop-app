@@ -42,6 +42,15 @@ class GameState: ObservableObject {
     @Published var customerYFraction: CGFloat = 1.15
     @Published var customerColor: Color = .blue
     @Published var lastSaleText: String? = nil
+    @Published var pendingSale: PendingSale? = nil
+
+    struct PendingSale: Identifiable {
+        let id = UUID()
+        let itemName: String
+        let price: Double
+        let accept: () -> Void
+        let reject: () -> Void
+    }
 
     private static let customerColors: [Color] = [.blue, .red, .green, .purple, .orange, .pink, .teal]
 
@@ -223,6 +232,7 @@ class GameState: ObservableObject {
     // --- BOLT-SIM: NPC LÁTOGATÁSOK ---
 
     private struct SaleCandidate {
+        let name: String
         let chance: Double
         let value: Double
         let sell: () -> String
@@ -241,7 +251,7 @@ class GameState: ObservableObject {
         let packCandidates = shelfPacks.map { pack in
             let currentPrice = price(for: pack)
             let chance = pack.type.customerInterest * priceEffect(basePrice: pack.type.shelfPrice, customPrice: currentPrice)
-            return SaleCandidate(chance: chance, value: currentPrice) { [weak self] in
+            return SaleCandidate(name: "Sealed \(pack.type.rawValue)", chance: chance, value: currentPrice) { [weak self] in
                 self?.shelfPacks.removeAll { $0.id == pack.id }
                 self?.packPrices.removeValue(forKey: GameState.key(pack.id))
                 self?.money += currentPrice
@@ -252,7 +262,7 @@ class GameState: ObservableObject {
         let cardCandidates = displayedCards.map { card in
             let currentPrice = price(for: card)
             let chance = card.rarity.customerInterest * priceEffect(basePrice: card.sellValue, customPrice: currentPrice)
-            return SaleCandidate(chance: chance, value: currentPrice) { [weak self] in
+            return SaleCandidate(name: card.name, chance: chance, value: currentPrice) { [weak self] in
                 self?.sellCard(card)
                 return "Sold \(card.name) for $\(String(format: "%.2f", currentPrice))"
             }
@@ -263,7 +273,7 @@ class GameState: ObservableObject {
     }
 
     private func scheduleNextCustomer() {
-        let delay = Double.random(in: 3...7)
+        let delay = Double.random(in: 1.2...2.8)
         customerTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             self?.spawnCustomer()
         }
@@ -277,31 +287,68 @@ class GameState: ObservableObject {
         }
         let targetIndex = Int.random(in: 0..<candidates.count)
         let target = candidates[targetIndex]
-        let xFraction = (CGFloat(targetIndex) + 0.5) / CGFloat(candidates.count)
+        let shelfXFraction = (CGFloat(targetIndex) + 0.5) / CGFloat(candidates.count)
 
         customerXFraction = 0.5
         customerYFraction = 1.15
         customerColor = GameState.customerColors.randomElement() ?? .blue
         isCustomerVisible = true
-        withAnimation(.easeInOut(duration: 1.2)) {
-            customerXFraction = xFraction
-            customerYFraction = 0.3
+
+        // 1. Besétál, megnézi a célzott polcot.
+        withAnimation(.easeInOut(duration: 1.0)) {
+            customerXFraction = shelfXFraction
+            customerYFraction = 0.35
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { [weak self] in
             guard let self else { return }
-            if Double.random(in: 0...1) < target.chance {
-                self.lastSaleText = target.sell()
-            } else {
-                self.lastSaleText = "A customer left without buying."
+            // 2. Nézelődik — átsétál egy szomszédos polchoz is, mielőtt döntene.
+            let browseXFraction = min(max(shelfXFraction + CGFloat.random(in: -0.12...0.12), 0.08), 0.92)
+            withAnimation(.easeInOut(duration: 0.9)) {
+                self.customerXFraction = browseXFraction
+                self.customerYFraction = 0.48
             }
-            withAnimation(.easeInOut(duration: 1.0)) { self.customerYFraction = 1.15 }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { [weak self] in
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                 guard let self else { return }
-                self.isCustomerVisible = false
-                self.lastSaleText = nil
-                self.scheduleNextCustomer()
+                let isInterested = Double.random(in: 0...1) < target.chance
+                if isInterested {
+                    // 3. A kasszához megy, és megvárja a jóváhagyásod.
+                    withAnimation(.easeInOut(duration: 0.9)) {
+                        self.customerXFraction = 0.5
+                        self.customerYFraction = 0.78
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                        guard let self else { return }
+                        self.pendingSale = PendingSale(
+                            itemName: target.name,
+                            price: target.value,
+                            accept: { [weak self] in
+                                self?.lastSaleText = target.sell()
+                                self?.finishCustomerVisit()
+                            },
+                            reject: { [weak self] in
+                                self?.lastSaleText = "You turned down the sale."
+                                self?.finishCustomerVisit()
+                            }
+                        )
+                    }
+                } else {
+                    self.lastSaleText = "Just browsing — no interest today."
+                    self.finishCustomerVisit()
+                }
             }
+        }
+    }
+
+    private func finishCustomerVisit() {
+        withAnimation(.easeInOut(duration: 0.9)) { self.customerYFraction = 1.15 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self else { return }
+            self.isCustomerVisible = false
+            self.pendingSale = nil
+            self.lastSaleText = nil
+            self.scheduleNextCustomer()
         }
     }
 

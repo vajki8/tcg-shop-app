@@ -32,6 +32,9 @@ struct ShopSceneView: View {
                     DoorView().padding(.bottom, 26)
                 }
 
+                CheckoutCounter()
+                    .position(x: geo.size.width * 0.5, y: geo.size.height * 0.78)
+
                 if gameState.isCustomerVisible {
                     CustomerSprite(color: gameState.customerColor)
                         .position(x: geo.size.width * gameState.customerXFraction, y: geo.size.height * gameState.customerYFraction)
@@ -45,6 +48,12 @@ struct ShopSceneView: View {
                         .clipShape(Capsule())
                         .position(x: geo.size.width / 2, y: geo.size.height * 0.62)
                         .transition(.opacity)
+                }
+
+                if let sale = gameState.pendingSale {
+                    CheckoutPrompt(sale: sale)
+                        .position(x: geo.size.width / 2, y: geo.size.height * 0.86)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
         }
@@ -141,6 +150,51 @@ private struct DoorView: View {
             }
             Text("ENTRANCE").font(.system(size: 7, weight: .bold)).foregroundColor(.black.opacity(0.4))
         }
+    }
+}
+
+// --- KASSZA ---
+private struct CheckoutCounter: View {
+    var body: some View {
+        VStack(spacing: 1) {
+            Text("💰").font(.system(size: 16))
+            RoundedRectangle(cornerRadius: 4)
+                .fill(LinearGradient(colors: [Color(red: 0.55, green: 0.36, blue: 0.2), Color(red: 0.42, green: 0.26, blue: 0.12)], startPoint: .top, endPoint: .bottom))
+                .frame(width: 52, height: 16)
+            Text("CHECKOUT").font(.system(size: 6, weight: .bold)).foregroundColor(.black.opacity(0.4))
+        }
+    }
+}
+
+// --- KASSZÁNÁL: elfogadod-e az eladást ennyiért? ---
+private struct CheckoutPrompt: View {
+    let sale: GameState.PendingSale
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Text("Sell \(sale.itemName) for $\(String(format: "%.2f", sale.price))?")
+                .font(.caption).bold()
+                .multilineTextAlignment(.center)
+                .foregroundColor(.white)
+                .padding(.horizontal, 6)
+
+            HStack(spacing: 10) {
+                Button(action: sale.reject) {
+                    Text("Reject").font(.caption).bold().foregroundColor(.white)
+                        .padding(.horizontal, 16).padding(.vertical, 8)
+                        .background(Color.red).clipShape(Capsule())
+                }
+                Button(action: sale.accept) {
+                    Text("Accept").font(.caption).bold().foregroundColor(.white)
+                        .padding(.horizontal, 16).padding(.vertical, 8)
+                        .background(Color.green).clipShape(Capsule())
+                }
+            }
+        }
+        .padding(12)
+        .background(Color.black.opacity(0.75))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .frame(width: 220)
     }
 }
 
